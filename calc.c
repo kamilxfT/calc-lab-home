@@ -3,8 +3,6 @@
 // Compile with: gcc -O2 -Wall -Wextra -std=c17 -o calc calc.c -lm
 // Resources used: geeksforgeeks.org (C string processing, file handling, and expression parsing)
 
-// AI tools used: None. The pointer-based buffer strategy and recursive 
-// descent parsing approach were implemented following standard compiler design patterns.
 
 #define _POSIX_C_SOURCE 200809L
 
