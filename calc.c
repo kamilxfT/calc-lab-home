@@ -333,3 +333,132 @@ static int evaluate(const char *src, size_t len, Buf *out)
     }
     return 0;
 }
+
+/* ================================================================= */
+/* File and Path Utilities                                           */
+/* ================================================================= */
+
+// Read the whole file into memory at once to avoid slow I/O overhead.
+static char *read_file(const char *path, size_t *len_out)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return NULL; }
+    long sz = ftell(f);
+    if (sz < 0 || fseek(f, 0, SEEK_SET) != 0) { fclose(f); return NULL; }
+    char *data = malloc((size_t)sz + 1);
+    if (!data) { fclose(f); return NULL; }
+    size_t got = fread(data, 1, (size_t)sz, f);
+    fclose(f);
+    if (got != (size_t)sz) { free(data); return NULL; }
+    data[sz] = '\0';
+    *len_out = (size_t)sz;
+    return data;
+}
+
+static char *base_name(const char *path)
+{
+    size_t end = strlen(path);
+    while (end > 1 && path[end - 1] == '/') end--;
+    size_t start = end;
+    while (start > 0 && path[start - 1] != '/') start--;
+    size_t n = end - start;
+    if (n > 4 && strncmp(path + end - 4, ".txt", 4) == 0) n -= 4;
+    char *r = malloc(n + 1);
+    if (!r) return NULL;
+    memcpy(r, path + start, n);
+    r[n] = '\0';
+    return r;
+}
+
+static char *join_path(const char *dir, const char *name)
+{
+    size_t n = strlen(dir) + strlen(name) + 2;
+    char *r = malloc(n);
+    if (r) snprintf(r, n, "%s/%s", dir, name);
+    return r;
+}
+
+static int is_dir(const char *path)
+{
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+static int is_regular_file(const char *path)
+{
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+static int ensure_dir(const char *path)
+{
+    if (mkdir(path, 0755) == 0) return 0;
+    if (errno == EEXIST && is_dir(path)) return 0;
+    fprintf(stderr, "calc: cannot create output folder '%s'\n", path);
+    return -1;
+}
+
+static int process_file(const char *in_path, const char *outdir)
+{
+    size_t len = 0;
+    char *src = read_file(in_path, &len);
+    if (!src) {
+        fprintf(stderr, "calc: cannot read '%s'\n", in_path);
+        return -1;
+    }
+
+    Buf out = { NULL, 0, 0 };
+    int rc = evaluate(src, len, &out);
+    free(src);
+    if (rc != 0) {
+        fprintf(stderr, "calc: out of memory\n");
+        free(out.data);
+        return -1;
+    }
+
+    char *base = base_name(in_path);
+    char *out_path = NULL;
+    if (base) {
+        size_t n = strlen(outdir) + strlen(base) + strlen(STUDENT_NAME)
+                 + strlen(STUDENT_LASTNAME) + strlen(STUDENT_ID) + 16;
+        out_path = malloc(n);
+        if (out_path)
+            snprintf(out_path, n, "%s/%s_%s_%s_%s.txt", outdir, base,
+                     STUDENT_NAME, STUDENT_LASTNAME, STUDENT_ID);
+    }
+    free(base);
+    if (!out_path) { free(out.data); fprintf(stderr, "calc: out of memory\n"); return -1; }
+
+    FILE *f = fopen(out_path, "wb");
+    int ok = f != NULL;
+    if (ok && out.len > 0 && fwrite(out.data, 1, out.len, f) != out.len) ok = 0;
+    if (f && fclose(f) != 0) ok = 0;
+    if (!ok) fprintf(stderr, "calc: cannot write '%s'\n", out_path);
+
+    free(out_path);
+    free(out.data);
+    return ok ? 0 : -1;
+}
+
+static int process_dir(const char *dir, const char *outdir)
+{
+    DIR *d = opendir(dir);
+    if (!d) {
+        fprintf(stderr, "calc: cannot open folder '%s'\n", dir);
+        return -1;
+    }
+    int result = 0;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        size_t n = strlen(e->d_name);
+        if (n <= 4 || strcmp(e->d_name + n - 4, ".txt") != 0) continue;
+        char *path = join_path(dir, e->d_name);
+        if (!path) { result = -1; break; }
+        if (is_regular_file(path) && process_file(path, outdir) != 0)
+            result = -1;
+        free(path);
+    }
+    closedir(d);
+    return result;
+}
