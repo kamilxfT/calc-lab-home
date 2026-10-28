@@ -313,3 +313,61 @@ static int evaluate(const char *src, size_t len, Buf *out)
     }
     return 0;
 }
+/* ================================================================= */
+/* Main Entry Point & File Handling                                  */
+/* ================================================================= */
+
+int main(int argc, char **argv)
+{
+    if (argc < 2) {
+        fprintf(stderr, "Usage: %s <filename>\n", argv[0]);
+        return 1;
+    }
+
+    FILE *f = fopen(argv[1], "rb");
+    if (!f) {
+        fprintf(stderr, "Error opening file %s: %s\n", argv[1], strerror(errno));
+        return 1;
+    }
+
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        return 1;
+    }
+    long size = ftell(f);
+    if (size < 0) {
+        fclose(f);
+        return 1;
+    }
+    rewind(f);
+
+    size_t len = (size_t)size;
+    char *buf = malloc(len > 0 ? len : 1);
+    if (!buf) {
+        fclose(f);
+        return 1;
+    }
+
+    size_t read_bytes = fread(buf, 1, len, f);
+    fclose(f);
+
+    if (read_bytes != len) {
+        free(buf);
+        return 1;
+    }
+
+    Buf out = {0};
+    if (evaluate(buf, len, &out) != 0) {
+        free(buf);
+        free(out.data);
+        return 1;
+    }
+
+    if (out.len > 0) {
+        fwrite(out.data, 1, out.len, stdout);
+    }
+
+    free(buf);
+    free(out.data);
+    return 0;
+}
