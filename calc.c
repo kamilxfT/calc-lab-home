@@ -254,3 +254,76 @@ static Value parse_expr(Parser *p)
     }
     return v;
 }
+/* ================================================================= */
+/* Output Buffer                                                     */
+/* ================================================================= */
+
+// I use a dynamic buffer to hold the results so we don't write to the disk a million times 
+// for huge files. Also, if an error happens, we can easily wipe the buffer clean and write only ERROR:<pos>.
+typedef struct { char *data; size_t len, cap; } Buf;
+
+static int buf_append(Buf *b, const char *s, size_t n)
+{
+    if (b->len + n > b->cap) {
+        size_t cap = b->cap ? b->cap : 4096;
+        while (cap < b->len + n) cap *= 2;
+        char *d = realloc(b->data, cap);
+        if (!d) return -1;
+        b->data = d;
+        b->cap  = cap;
+    }
+    memcpy(b->data + b->len, s, n);
+    b->len += n;
+    return 0;
+}
+
+/* ================================================================= */
+/* File Evaluation                                                   */
+/* ================================================================= */
+
+static int evaluate(const char *src, size_t len, Buf *out)
+{
+    Parser p;
+    memset(&p, 0, sizeof p);
+    p.src = src;
+    p.len = len;
+
+    size_t i = 0;
+    while (i < len) {
+        size_t j = i;
+        while (j < len && (src[j] == ' ' || src[j] == '\t')) j++;
+
+        // Skip over blank lines and ignore lines starting with '#' (comments).
+        if (j >= len || src[j] == '\n' || src[j] == '#') {
+            const char *nl = memchr(src + j, '\n', len - j);
+            if (!nl) break;
+            i = (size_t)(nl - src) + 1;
+            continue;
+        }
+
+        p.i = i;
+        next_token(&p);
+        Value v = parse_expr(&p);
+        
+        // If we finished an expression but there's still garbage left (like an extra ')'), it's an error.
+        if (!p.failed && p.tok.type != T_EOL)
+            fail(&p, p.tok.pos);
+        if (p.failed) break;
+
+        char tmp[64];
+        int n = v.is_float ? snprintf(tmp, sizeof tmp, "%.15g\n", v.d)
+                           : snprintf(tmp, sizeof tmp, "%lld\n", v.i);
+        if (buf_append(out, tmp, (size_t)n) != 0) return -1;
+
+        i = p.i + 1;
+    }
+
+    // Rule 3: If there's any error in the file, we throw away all results and only print the first error.
+    if (p.failed) {
+        char tmp[64];
+        int n = snprintf(tmp, sizeof tmp, "ERROR:%zu\n", p.err_pos);
+        out->len = 0; // Clear previous results
+        if (buf_append(out, tmp, (size_t)n) != 0) return -1;
+    }
+    return 0;
+}
