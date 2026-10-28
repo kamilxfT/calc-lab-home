@@ -56,3 +56,78 @@ static void fail(Parser *p, size_t pos)
 }
 
 static int is_digit(char c) { return c >= '0' && c <= '9'; }
+// We check for a '.' to decide if it's a float or int. 
+// If there's a dot, we use double to keep the fraction; otherwise, we stick to long long.
+static Value read_number(Parser *p)
+{
+    size_t start = p->i;
+    while (p->i < p->len && is_digit(p->src[p->i]))
+        p->i++;
+
+    int is_float = 0;
+    if (p->i + 1 < p->len && p->src[p->i] == '.' && is_digit(p->src[p->i + 1])) {
+        is_float = 1;
+        p->i++;
+        while (p->i < p->len && is_digit(p->src[p->i]))
+            p->i++;
+    }
+
+    size_t n = p->i - start;
+    char small[64];
+    char *buf = n < sizeof small ? small : malloc(n + 1);
+    if (!buf) return make_float(0.0);
+    
+    memcpy(buf, p->src + start, n);
+    buf[n] = '\0';
+
+    Value res;
+    if (is_float) {
+        res = make_float(strtod(buf, NULL));
+    } else {
+        // Using strtoll instead of a manual loop here to avoid potential 
+        // signed integer overflow crashes if the input has huge numbers.
+        res = make_int(strtoll(buf, NULL, 10));
+    }
+    
+    if (buf != small) free(buf);
+    return res;
+}
+
+// Fetching tokens one by one (lazy parsing) instead of copying the whole string first. 
+// This is much faster and handles multi-megabyte files without slowing down.
+static void next_token(Parser *p)
+{
+    while (p->i < p->len && (p->src[p->i] == ' ' || p->src[p->i] == '\t'))
+        p->i++;
+
+    Token t;
+    t.pos = p->i + 1; // Rules say positions are 1-based
+    t.val = make_int(0);
+
+    if (p->i >= p->len || p->src[p->i] == '\n') {
+        t.type = T_EOL;
+        p->tok = t;
+        return;
+    }
+
+    char c = p->src[p->i];
+    if (is_digit(c)) {
+        t.type = T_NUM;
+        t.val = read_number(p);
+    } else {
+        p->i++;
+        switch (c) {
+        case '+': t.type = T_PLUS;   break;
+        case '-': t.type = T_MINUS;  break;
+        case '/': t.type = T_SLASH;  break;
+        case '(': t.type = T_LPAREN; break;
+        case ')': t.type = T_RPAREN; break;
+        case '*':
+            if (p->i < p->len && p->src[p->i] == '*') { p->i++; t.type = T_POW; }
+            else t.type = T_STAR;
+            break;
+        default:  t.type = T_BAD;    break;
+        }
+    }
+    p->tok = t;
+}
