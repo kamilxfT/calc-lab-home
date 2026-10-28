@@ -462,3 +462,74 @@ static int process_dir(const char *dir, const char *outdir)
     closedir(d);
     return result;
 }
+
+/* ================================================================= */
+/* Main / CLI                                                        */
+/* ================================================================= */
+
+static void usage(void)
+{
+    fprintf(stderr,
+        "usage: calc [-d DIR | --dir DIR] [-o OUTDIR | --output-dir OUTDIR] [input.txt]\n");
+}
+
+int main(int argc, char **argv)
+{
+    const char *dir = NULL, *outdir = NULL, *input = NULL;
+
+    if (argc < 2) { usage(); return 1; }
+
+    for (int k = 1; k < argc; k++) {
+        const char *a = argv[k];
+        if (strcmp(a, "-d") == 0 || strcmp(a, "--dir") == 0) {
+            if (k + 1 >= argc) { fprintf(stderr, "calc: %s needs a folder\n", a); return 1; }
+            dir = argv[++k];
+        } else if (strcmp(a, "-o") == 0 || strcmp(a, "--output-dir") == 0) {
+            if (k + 1 >= argc) { fprintf(stderr, "calc: %s needs a folder\n", a); return 1; }
+            outdir = argv[++k];
+        } else if (a[0] == '-') {
+            fprintf(stderr, "calc: unknown option '%s'\n", a);
+            usage();
+            return 1;
+        } else if (!input) {
+            input = a;
+        } else {
+            fprintf(stderr, "calc: only one input file is allowed\n");
+            return 1;
+        }
+    }
+
+    if ((dir == NULL) == (input == NULL)) {
+        fprintf(stderr, "calc: give either an input file or -d DIR\n");
+        usage();
+        return 1;
+    }
+
+    if (dir && !is_dir(dir)) {
+        fprintf(stderr, "calc: folder '%s' does not exist\n", dir);
+        return 1;
+    }
+    if (input && !is_regular_file(input)) {
+        fprintf(stderr, "calc: file '%s' does not exist\n", input);
+        return 1;
+    }
+
+    char *default_out = NULL;
+    if (!outdir) {
+        char *base = base_name(dir ? dir : input);
+        if (!base) { fprintf(stderr, "calc: out of memory\n"); return 1; }
+        size_t n = strlen(base) + strlen(STUDENT_NAME) + strlen(STUDENT_ID) + 3;
+        default_out = malloc(n);
+        if (default_out) snprintf(default_out, n, "%s_%s_%s", base, STUDENT_NAME, STUDENT_ID);
+        free(base);
+        if (!default_out) { fprintf(stderr, "calc: out of memory\n"); return 1; }
+        outdir = default_out;
+    }
+
+    int rc = ensure_dir(outdir);
+    if (rc == 0)
+        rc = dir ? process_dir(dir, outdir) : process_file(input, outdir);
+
+    free(default_out);
+    return rc == 0 ? 0 : 1;
+}
